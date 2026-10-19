@@ -1,4 +1,4 @@
-# meteoswiss_mqtt
+# Meteoswiss MQTT publication
 
 Publish MeteoSwiss weather values to [Gladys Assistant](https://gladysassistant.com/) over MQTT.
 
