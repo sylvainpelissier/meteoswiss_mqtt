@@ -2,21 +2,13 @@
 
 Publish MeteoSwiss weather values to [Gladys Assistant](https://gladysassistant.com/) over MQTT.
 
-`meteosuisse_to_gladys.py` downloads the latest measurements of a MeteoSwiss SwissMetNet
+`meteoswiss_mqtt.py` downloads the latest measurements of a MeteoSwiss SwissMetNet
 station (default: `cdf`, La Chaux-de-Fonds) from the
 [open data CSV](https://data.geo.admin.ch/ch.meteoschweiz.ogd-smn/), takes the most recent
-row and publishes, as retained messages:
-
-| Value              | CSV column | MQTT topic                                                                                                     |
-|--------------------|------------|----------------------------------------------------------------------------------------------------------------|
-| Temperature (°C)   | `tre200s0` | `gladys/master/device/mqtt:external:meteosuisse-cdf/feature/mqtt:external:meteosuisse-cdf:temperature/state` |
-| Humidity (%)       | `ure200s0` | `gladys/master/device/mqtt:external:meteosuisse-cdf/feature/mqtt:external:meteosuisse-cdf:humidity/state`    |
+row and publishes, as retained messages.
 
 The `ETag` of the last download is stored in `$CACHE_DIRECTORY/state`; when the file has not
 changed on the server, nothing is published.
-
-In Gladys, create an MQTT device with external ID `mqtt:external:meteosuisse-cdf` and two
-features with the external IDs above.
 
 ## Configuration
 
@@ -51,20 +43,20 @@ docker run --rm --network host eclipse-mosquitto:2 \
 Run the script (`CACHE_DIRECTORY` is normally provided by systemd):
 
 ```bash
-CACHE_DIRECTORY=/tmp/meteosuisse uv run meteosuisse_to_gladys.py
+CACHE_DIRECTORY=/tmp/meteosuisse uv run meteoswiss_mqtt.py
 ```
 
-Remove `/tmp/meteosuisse/state` to force a new download and publication.
+Remove `/tmp/meteoswiss/state` to force a new download and publication.
 
 ## Running every 20 minutes with systemd
 
 Install the script:
 
 ```bash
-sudo install -Dm755 meteosuisse_to_gladys.py /opt/meteoswiss_mqtt/meteosuisse_to_gladys.py
+sudo install -Dm755 meteoswiss_mqtt.py /opt/meteoswiss_mqtt/meteoswiss_mqtt.py
 ```
 
-Create `/etc/systemd/system/meteosuisse.service`:
+Create `/etc/systemd/system/meteoswiss.service`:
 
 ```ini
 [Unit]
@@ -75,15 +67,15 @@ After=network-online.target
 [Service]
 Type=oneshot
 DynamicUser=yes
-CacheDirectory=meteosuisse
-ExecStart=/usr/bin/python /opt/meteoswiss_mqtt/meteosuisse_to_gladys.py
+CacheDirectory=meteoswiss
+ExecStart=/usr/bin/python /opt/meteoswiss_mqtt/meteoswiss_mqtt.py
 ```
 
-Create `/etc/systemd/system/meteosuisse.timer`:
+Create `/etc/systemd/system/meteoswiss.timer`:
 
 ```ini
 [Unit]
-Description=Run meteosuisse.service every 20 minutes
+Description=Run meteoswiss.service every 20 minutes
 
 [Timer]
 OnCalendar=*:0/20
@@ -97,10 +89,10 @@ Enable the timer and check that it works:
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now meteosuisse.timer
-sudo systemctl start meteosuisse.service     # run once now
-systemctl list-timers meteosuisse.timer
-journalctl -u meteosuisse.service
+sudo systemctl enable --now meteoswiss.timer
+sudo systemctl start meteoswiss.service     # run once now
+systemctl list-timers meteoswiss.timer
+journalctl -u meteoswiss.service
 ```
 
 ## License
