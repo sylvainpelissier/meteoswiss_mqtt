@@ -3,37 +3,44 @@ import csv
 import io
 import os
 import sys
+import urllib.error
 import urllib.request
 from pathlib import Path
 
 import paho.mqtt.client as mqtt
 
-STATION = "cdf"
-DEVICE_ID = f"mqtt:external:meteosuisse-{STATION}"
-FEATURE_TEMP_ID = f"{DEVICE_ID}:temperature"
-FEATURE_HUM_ID = f"{DEVICE_ID}:humidity"
+STATION = os.environ.get("METEOSWISS_STATION", "cdf").lower()
+
+# measurement name -> CSV column, e.g. "temperature=tre200s0,humidity=ure200s0"
+#   tre200s0: air temperature at 2 m in degC
+#   ure200s0: relative humidity at 2 m in %
+MEASUREMENTS = dict(
+    item.strip().split("=", 1)
+    for item in os.environ.get(
+        "METEOSWISS_MEASUREMENTS", "temperature=tre200s0,humidity=ure200s0"
+    ).split(",")
+    if item.strip()
+)
 
 CSV_URL = (
     f"https://data.geo.admin.ch/ch.meteoschweiz.ogd-smn/"
     f"{STATION}/ogd-smn_{STATION}_t_now.csv"
 )
-COL_TEMP = "tre200s0"        # air temperature at 2 in meters
-COL_HUM = "ure200s0"         # humidity at 2 m in %
 
-# Create by systemd via CacheDirectory=meteosuisse
+# Create by systemd via CacheDirectory=meteoswiss
 CACHE_DIR = Path(os.environ["CACHE_DIRECTORY"])
 STATE_FILE = CACHE_DIR / "state"
 
-MQTT_HOST = "localhost"
-MQTT_PORT = 1883
-MQTT_USER = "gladys"
-MQTT_PASSWORD = "mypassword"
-TOPIC_TEMP = f"gladys/master/device/{DEVICE_ID}/feature/{FEATURE_TEMP_ID}/state"
-TOPIC_HUM = f"gladys/master/device/{DEVICE_ID}/feature/{FEATURE_HUM_ID}/state"
+MQTT_HOST = os.environ.get("MQTT_HOST", "localhost")
+MQTT_PORT = int(os.environ.get("MQTT_PORT", "1883"))
+MQTT_USER = os.environ.get("MQTT_USER")
+MQTT_PASSWORD = os.environ.get("MQTT_PASSWORD")
+# Placeholders: {station}, {measurement}
+MQTT_TOPIC = os.environ.get("MQTT_TOPIC", "meteoswiss/{station}/{measurement}")
 
 
 def fetch_csv(etag):
-    req = urllib.request.Request(CSV_URL, headers={"User-Agent": "gladys-smn/1.0"})
+    req = urllib.request.Request(CSV_URL, headers={"User-Agent": "meteoswiss-mqtt/1.0"})
     if etag:
         req.add_header("If-None-Match", etag)
 
@@ -42,20 +49,22 @@ def fetch_csv(etag):
             etag = resp.headers.get("ETag", etag)
             return resp.read().decode("cp1252"), etag
     except urllib.error.HTTPError as exc:
-            if exc.code == 304:
-                return None, etag
-            raise
-    
+        if exc.code == 304:
+            return None, etag
+        raise
+
+
 def last_values(text):
     reader = csv.DictReader(io.StringIO(text), delimiter=";")
 
-    temp = hum = ts = None
+    ts = None
+    values = {}
     for row in reader:
-        temp = row.get(COL_TEMP, "").strip()
-        hum = row.get(COL_HUM, "").strip()
         ts = row.get("reference_timestamp")
+        values = {name: row.get(col, "").strip() for name, col in MEASUREMENTS.items()}
 
-    return ts, temp, hum
+    return ts, values
+
 
 def read_state():
     try:
@@ -65,9 +74,11 @@ def read_state():
     except (FileNotFoundError):
         return None
 
+
 def write_state(etag):
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     STATE_FILE.write_text(etag)
+
 
 def publish_all(messages):
     try:
@@ -85,6 +96,7 @@ def publish_all(messages):
         client.loop_stop()
         client.disconnect()
 
+
 def main():
     etag = read_state()
     rsp, etag = fetch_csv(etag)
@@ -94,19 +106,20 @@ def main():
         return 0
 
     write_state(etag)
-    ts, temp, hum = last_values(rsp)
+    ts, values = last_values(rsp)
     if ts is None:
         print("No value in the file", file=sys.stderr)
         return 1
 
-    messages = []
-    if temp is not None:
-        messages.append((TOPIC_TEMP, temp))
-    if hum is not None:
-        messages.append((TOPIC_HUM, hum)) 
+    messages = [
+        (MQTT_TOPIC.format(station=STATION, measurement=name), value)
+        for name, value in values.items()
+        if value
+    ]
 
     publish_all(messages)
-    print(f"[{ts} UTC] {temp} degC / {hum} % publie")
+    for topic, payload in messages:
+        print(f"[{ts} UTC] {topic} = {payload}")
     return 0
 
 
